@@ -1,10 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.NFC" />
     <uses-feature android:name="android.hardware.nfc" android:required="true" />
 
-    <!-- Pour afficher la liste de tes apps dans le verrou -->
+    <!--
+        Pour voir TOUTES tes apps dans le verrou, banques comprises.
+        Depuis Android 11, une appli ne voit par défaut que les apps qui
+        acceptent explicitement d'être vues (la déclaration <queries> plus
+        bas). Les banques s'excluent souvent de cette liste exprès.
+        QUERY_ALL_PACKAGES règle ça, mais le Play Store refuse les applis qui
+        l'utilisent sans justification précise. Comme Crewfit NFC n'est
+        jamais publiée là-bas (installation directe seulement), ça ne pose
+        aucun problème ici.
+    -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
