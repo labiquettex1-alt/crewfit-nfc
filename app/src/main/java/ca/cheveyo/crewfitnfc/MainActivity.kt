@@ -72,7 +72,10 @@ class MainActivity : Activity(), NfcAdapter.ReaderCallback {
 
     private var writeType = 0
     private val draft = mutableMapOf<String, String>()
+    private val draftActions = mutableListOf<Action>()
     private var lockBox: CheckBox? = null
+    private val WRITE_TABS = listOf("Lien", "Texte", "Contact", "Wi-Fi", "Automatisation", "Effacer")
+    private val ERASE_INDEX = 5
 
     private val dateFmt = SimpleDateFormat("d MMM yyyy, HH:mm", Locale.CANADA_FRENCH)
 
@@ -329,6 +332,14 @@ class MainActivity : Activity(), NfcAdapter.ReaderCallback {
                     }
                 }, 8)
             }
+            if (label == "Automatisation") {
+                val payload = r.message?.records?.firstOrNull { it.toMimeType() == ActionsCodec.MIME }?.payload
+                if (payload != null) {
+                    c.add(button("Tester ces actions") {
+                        startActivity(Intent(this, AutomationActivity::class.java).putExtra(AutomationActivity.EXTRA_PAYLOAD, payload))
+                    }, 8)
+                }
+            }
         }
 
         val row = hbox()
@@ -379,7 +390,7 @@ class MainActivity : Activity(), NfcAdapter.ReaderCallback {
         val form = card()
         form.add(text("Écrire sur une puce", 18f, bold = true))
         val chips = hbox()
-        listOf("Lien", "Texte", "Contact", "Wi-Fi", "Effacer").forEachIndexed { i, t ->
+        WRITE_TABS.forEachIndexed { i, t ->
             chips.add(chip(t, i == writeType) { writeType = i; showTab(1) }, if (i == 0) 0 else 4, 1f)
         }
         form.add(chips, 10)
@@ -426,6 +437,7 @@ class MainActivity : Activity(), NfcAdapter.ReaderCallback {
                     ), 8
                 )
             }
+            4 -> buildAutomationEditor(form)
             else -> form.add(
                 text("Efface tout le contenu de la puce. Impossible si elle a été verrouillée.", 14f, C.MUTED),
                 10
@@ -433,7 +445,7 @@ class MainActivity : Activity(), NfcAdapter.ReaderCallback {
         }
 
         lockBox = null
-        if (writeType != 4) {
+        if (writeType != ERASE_INDEX) {
             val cb = CheckBox(this).apply {
                 text = "Verrouiller la puce après l'écriture (définitif)"
                 setTextColor(C.TEXT)
@@ -442,7 +454,7 @@ class MainActivity : Activity(), NfcAdapter.ReaderCallback {
             lockBox = cb
             form.add(cb, 10)
         }
-        form.add(button(if (writeType == 4) "Effacer une puce" else "Écrire sur une puce") { armWrite() }, 12)
+        form.add(button(if (writeType == ERASE_INDEX) "Effacer une puce" else "Écrire sur une puce") { armWrite() }, 12)
         content.add(form, 12)
     }
 
@@ -456,6 +468,94 @@ class MainActivity : Activity(), NfcAdapter.ReaderCallback {
             }
         })
         return et
+    }
+
+    private fun buildAutomationEditor(form: LinearLayout) {
+        form.add(
+            text(
+                "Déclenche plusieurs actions sur CE téléphone quand tu scannes la puce avec Crewfit NFC installée. " +
+                    "Sur un autre téléphone, la puce ne fera rien.",
+                13f, C.MUTED
+            ), 10
+        )
+        draftActions.forEachIndexed { idx, act ->
+            val row = vbox()
+            row.background = rounded(C.CARD2, 12)
+            val p = dp(12)
+            row.setPadding(p, p, p, p)
+
+            val chips = hbox()
+            ActionType.entries.forEachIndexed { ti, t ->
+                chips.add(chip(t.label, act.type == t) {
+                    draftActions[idx] = act.copy(type = t)
+                    if (t == ActionType.NOTIFY) ensureNotifPermission()
+                    showTab(1)
+                }, if (ti == 0) 0 else 4, 1f)
+            }
+            row.add(chips)
+
+            if (act.type == ActionType.OPEN_APP) {
+                row.add(text(act.pkgLabel.ifBlank { "Aucune appli choisie" }, 14f), 10)
+                row.add(button("Choisir une appli", false) { pickAppForAction(idx) }, 6)
+            } else {
+                val hint = when (act.type) {
+                    ActionType.SPEAK -> "Texte que le téléphone va dire"
+                    ActionType.NOTIFY -> "Texte de la notification"
+                    ActionType.OPEN_LINK -> "Lien à ouvrir (ex. instagram.com/…)"
+                    else -> ""
+                }
+                val type = if (act.type == ActionType.OPEN_LINK)
+                    InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+                else InputType.TYPE_CLASS_TEXT
+                row.add(actionField(idx, hint, type), 10)
+            }
+
+            row.add(chip("Supprimer cette action", false) {
+                draftActions.removeAt(idx)
+                showTab(1)
+            }.apply { setPadding(dp(10), dp(6), dp(10), dp(6)) }, 10)
+
+            form.add(row, 10)
+        }
+
+        form.add(button("+ Ajouter une action", false) {
+            draftActions.add(Action(ActionType.SPEAK))
+            showTab(1)
+        }, 10)
+    }
+
+    private fun actionField(idx: Int, hint: String, type: Int): EditText {
+        val et = input(hint, draftActions[idx].text, type)
+        et.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                if (idx < draftActions.size) draftActions[idx] = draftActions[idx].copy(text = s?.toString() ?: "")
+            }
+        })
+        return et
+    }
+
+    private fun pickAppForAction(idx: Int) {
+        val apps = launchableApps()
+        val labels = apps.map { it.second }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Choisir une appli")
+            .setItems(labels) { _, which ->
+                val (pkg, label, _) = apps[which]
+                draftActions[idx] = draftActions[idx].copy(pkg = pkg, pkgLabel = label)
+                showTab(1)
+            }
+            .setNegativeButton("Annuler", null)
+            .show()
+    }
+
+    private fun ensureNotifPermission() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
+        }
     }
 
     private fun preset(type: Int, values: Map<String, String>) {
@@ -504,6 +604,24 @@ class MainActivity : Activity(), NfcAdapter.ReaderCallback {
                 }
                 Triple(NdefMessage(NfcUtils.wifiRecord(d("ssid"), draft["pass"] ?: "")), "Wi-Fi : ${d("ssid")}", "Écriture Wi-Fi")
             }
+            4 -> {
+                if (draftActions.isEmpty()) {
+                    toast("Ajoute au moins une action.")
+                    return null
+                }
+                val incomplete = draftActions.any {
+                    when (it.type) {
+                        ActionType.OPEN_APP -> it.pkg.isBlank()
+                        else -> it.text.isBlank()
+                    }
+                }
+                if (incomplete) {
+                    toast("Remplis chaque action avant d'écrire.")
+                    return null
+                }
+                val rec = NdefRecord.createMime(ActionsCodec.MIME, ActionsCodec.encode(draftActions))
+                Triple(NdefMessage(rec), ActionsCodec.summary(draftActions), "Écriture automatisation")
+            }
             else -> Triple(
                 NdefMessage(NdefRecord(NdefRecord.TNF_EMPTY, null, null, null)),
                 "Puce effacée",
@@ -519,10 +637,10 @@ class MainActivity : Activity(), NfcAdapter.ReaderCallback {
         }
         val built = buildMessage() ?: return
         val (msg, summary, action) = built
-        val lock = lockBox?.isChecked == true && writeType != 4
+        val lock = lockBox?.isChecked == true && writeType != ERASE_INDEX
         val go = {
             mode = Mode.Write(msg, lock, summary, action)
-            val verb = if (writeType == 4) "effacer" else "écrire"
+            val verb = if (writeType == ERASE_INDEX) "effacer" else "écrire"
             showBanner("✍️ Approche une puce pour $verb (${msg.byteArrayLength} octets)… Touche ici pour annuler.", C.ACCENT)
         }
         if (lock) {

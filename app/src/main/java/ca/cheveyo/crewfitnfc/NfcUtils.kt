@@ -77,6 +77,7 @@ object NfcUtils {
         NdefRecord.TNF_MIME_MEDIA -> {
             val mime = rec.toMimeType() ?: ""
             when {
+                mime == ActionsCodec.MIME -> "Automatisation" to ActionsCodec.summary(ActionsCodec.decode(rec.payload))
                 mime.contains("vcard") -> "Contact" to vcardSummary(String(rec.payload, Charsets.UTF_8))
                 mime == "application/vnd.wfa.wsc" -> "Wi-Fi" to "Réseau : ${wifiSsid(rec.payload) ?: "?"}"
                 mime.startsWith("text/") -> "Texte ($mime)" to String(rec.payload, Charsets.UTF_8)

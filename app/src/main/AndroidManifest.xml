@@ -4,6 +4,7 @@
 
     <uses-permission android:name="android.permission.NFC" />
     <uses-feature android:name="android.hardware.nfc" android:required="true" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!--
         Pour voir TOUTES tes apps dans le verrou, banques comprises.
@@ -49,6 +50,21 @@
             android:excludeFromRecents="true"
             android:launchMode="singleInstance"
             android:taskAffinity="" />
+
+        <!-- S'ouvre toute seule quand le téléphone lit une puce « Automatisation » Crewfit NFC. -->
+        <activity
+            android:name=".AutomationActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.nfc.action.NDEF_DISCOVERED" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/vnd.crewfit.actions+json" />
+            </intent-filter>
+        </activity>
 
         <service
             android:name=".LockService"
