@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Crewfit NFC</string>
+    <string name="lock_service_name">Verrou Crewfit NFC</string>
+    <string name="acc_desc">Détecte l\'ouverture des apps que tu as choisies et demande ta puce NFC clé avant de les afficher. Aucune donnée n\'est lue à l\'écran ni envoyée ailleurs.</string>
+</resources>
