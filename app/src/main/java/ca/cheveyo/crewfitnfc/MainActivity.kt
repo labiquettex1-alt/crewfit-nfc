@@ -76,6 +76,11 @@ class MainActivity : Activity(), NfcAdapter.ReaderCallback {
     private var lockBox: CheckBox? = null
     private val WRITE_TABS = listOf("Lien", "Texte", "Contact", "Wi-Fi", "Automatisation", "Effacer")
     private val ERASE_INDEX = 5
+    private var sizeLabel: TextView? = null
+    private var appFilter = ""
+    private var appsListBox: LinearLayout? = null
+    private var allAppsCache: List<Triple<String, String, Drawable>> = emptyList()
+    private var lockedSet: MutableSet<String> = mutableSetOf()
 
     private val dateFmt = SimpleDateFormat("d MMM yyyy, HH:mm", Locale.CANADA_FRENCH)
 
@@ -478,6 +483,9 @@ class MainActivity : Activity(), NfcAdapter.ReaderCallback {
                 13f, C.MUTED
             ), 10
         )
+        sizeLabel = text("", 12f, C.MUTED)
+        form.add(sizeLabel!!, 8)
+
         draftActions.forEachIndexed { idx, act ->
             val row = vbox()
             row.background = rounded(C.CARD2, 12)
@@ -522,6 +530,7 @@ class MainActivity : Activity(), NfcAdapter.ReaderCallback {
             draftActions.add(Action(ActionType.SPEAK))
             showTab(1)
         }, 10)
+        updateAutomationSize()
     }
 
     private fun actionField(idx: Int, hint: String, type: Int): EditText {
@@ -531,9 +540,24 @@ class MainActivity : Activity(), NfcAdapter.ReaderCallback {
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: Editable?) {
                 if (idx < draftActions.size) draftActions[idx] = draftActions[idx].copy(text = s?.toString() ?: "")
+                updateAutomationSize()
             }
         })
         return et
+    }
+
+    /** Mis à jour après chaque frappe, sans reconstruire tout l'écran (le clavier ne saute pas). */
+    private fun updateAutomationSize() {
+        val n = if (draftActions.isEmpty()) 0 else ActionsCodec.messageSize(draftActions)
+        val (fits, color) = when {
+            n == 0 -> "" to C.MUTED
+            n <= 130 -> "tient sur une NTAG213" to C.MUTED
+            n <= 490 -> "trop gros pour une NTAG213, prends une NTAG215" to Color.parseColor("#D97706")
+            n <= 910 -> "prends une NTAG216" to Color.parseColor("#D97706")
+            else -> "beaucoup trop gros, raccourcis tes textes" to C.DANGER
+        }
+        sizeLabel?.text = if (n == 0) "" else "$n octets · $fits"
+        sizeLabel?.setTextColor(color)
     }
 
     private fun pickAppForAction(idx: Int) {
@@ -826,27 +850,28 @@ class MainActivity : Activity(), NfcAdapter.ReaderCallback {
         content.add(kc, 12)
 
         val apps = card()
-        apps.add(text("Apps à verrouiller", 16f, bold = true))
-        val locked = store.lockedApps.toMutableSet()
-        for ((pkg, label, icon) in launchableApps()) {
-            val r = hbox()
-            r.setPadding(0, dp(6), 0, dp(6))
-            val iv = ImageView(this)
-            iv.setImageDrawable(icon)
-            r.addView(iv, LinearLayout.LayoutParams(dp(32), dp(32)))
-            r.add(text(label, 15f), 12, 1f)
-            val cb = CheckBox(this).apply {
-                isChecked = pkg in locked
-                buttonTintList = ColorStateList.valueOf(C.ACCENT)
-                setOnCheckedChangeListener { _, v ->
-                    if (v) locked.add(pkg) else locked.remove(pkg)
-                    store.lockedApps = locked.toSet()
-                }
+        allAppsCache = launchableApps()
+        lockedSet = store.lockedApps.toMutableSet()
+        apps.add(text("Apps à verrouiller (${allAppsCache.size} au total)", 16f, bold = true))
+        apps.add(
+            text(
+                "Si ta banque n'apparaît pas, écris une partie de son nom ci-dessous, ou dis-moi le nom exact et je regarde pourquoi.",
+                12f, C.MUTED
+            ), 2
+        )
+        val search = input("Chercher une appli (ex. desjardins, banque)")
+        search.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                appFilter = s?.toString() ?: ""
+                rebuildAppRows()
             }
-            r.addView(cb)
-            r.setOnClickListener { cb.toggle() }
-            apps.add(r, 2)
-        }
+        })
+        apps.add(search, 8)
+        appsListBox = vbox()
+        apps.add(appsListBox!!, 6)
+        rebuildAppRows()
         apps.add(
             text(
                 "Si tu verrouilles Paramètres et que tu perds toutes tes puces clés : redémarre le cell en mode sans échec " +
@@ -855,6 +880,38 @@ class MainActivity : Activity(), NfcAdapter.ReaderCallback {
             ), 12
         )
         content.add(apps, 12)
+    }
+
+    private fun rebuildAppRows() {
+        val box = appsListBox ?: return
+        box.removeAllViews()
+        val q = appFilter.trim().lowercase()
+        val filtered = if (q.isBlank()) allAppsCache else allAppsCache.filter {
+            it.second.lowercase().contains(q) || it.first.lowercase().contains(q)
+        }
+        if (filtered.isEmpty()) {
+            box.add(text("Aucune appli ne correspond à « $appFilter ».", 13f, C.MUTED), 6)
+            return
+        }
+        for ((pkg, label, icon) in filtered) {
+            val r = hbox()
+            r.setPadding(0, dp(6), 0, dp(6))
+            val iv = ImageView(this)
+            iv.setImageDrawable(icon)
+            r.addView(iv, LinearLayout.LayoutParams(dp(32), dp(32)))
+            r.add(text(label, 15f), 12, 1f)
+            val cb = CheckBox(this).apply {
+                isChecked = pkg in lockedSet
+                buttonTintList = ColorStateList.valueOf(C.ACCENT)
+                setOnCheckedChangeListener { _, v ->
+                    if (v) lockedSet.add(pkg) else lockedSet.remove(pkg)
+                    store.lockedApps = lockedSet.toSet()
+                }
+            }
+            r.addView(cb)
+            r.setOnClickListener { cb.toggle() }
+            box.add(r, 2)
+        }
     }
 
     @Suppress("DEPRECATION")
