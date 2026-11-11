@@ -15,6 +15,12 @@ enum class ActionType(val code: Char, val label: String) {
 data class Action(val type: ActionType, val text: String = "", val pkg: String = "", val pkgLabel: String = "")
 
 /**
+ * Une entrée d'une puce « Multi » : un lien ou un texte, écrit en NDEF standard
+ * (lisible par n'importe quel téléphone, pas seulement Crewfit NFC).
+ */
+data class MultiRecord(var isLink: Boolean, var value: String = "")
+
+/**
  * Format compact fait exprès pour les petites puces (NTAG213 ≈ 137 octets).
  * Une action par ligne : <lettre><tab><valeur>, et pour une appli : a<tab>pkg<tab>nom.
  * Pas de JSON, pas de clés répétées : chaque octet compte.

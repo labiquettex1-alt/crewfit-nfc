@@ -74,8 +74,11 @@ class MainActivity : Activity(), NfcAdapter.ReaderCallback {
     private val draft = mutableMapOf<String, String>()
     private val draftActions = mutableListOf<Action>()
     private var lockBox: CheckBox? = null
-    private val WRITE_TABS = listOf("Lien", "Texte", "Contact", "Wi-Fi", "Automatisation", "Effacer")
-    private val ERASE_INDEX = 5
+    private val WRITE_TABS = listOf("Lien", "Texte", "Contact", "Wi-Fi", "Automatisation", "Multi", "Effacer")
+    private val MULTI_INDEX = 5
+    private val ERASE_INDEX = 6
+    private val draftRecords = mutableListOf<MultiRecord>()
+    private var multiSizeLabel: TextView? = null
     private var sizeLabel: TextView? = null
     private var appFilter = ""
     private var appsListBox: LinearLayout? = null
@@ -443,6 +446,7 @@ class MainActivity : Activity(), NfcAdapter.ReaderCallback {
                 )
             }
             4 -> buildAutomationEditor(form)
+            5 -> buildMultiEditor(form)
             else -> form.add(
                 text("Efface tout le contenu de la puce. Impossible si elle a été verrouillée.", 14f, C.MUTED),
                 10
@@ -560,6 +564,107 @@ class MainActivity : Activity(), NfcAdapter.ReaderCallback {
         sizeLabel?.setTextColor(color)
     }
 
+    // ---------- Puce « Multi » (plusieurs enregistrements NDEF standard) ----------
+
+    private fun buildMultiEditor(form: LinearLayout) {
+        form.add(
+            text(
+                "Mets plusieurs liens et textes sur une même puce (ex. Instagram, un mot, puis YouTube).",
+                13f, C.MUTED
+            ), 10
+        )
+        form.add(
+            text(
+                "⚠️ Important : quand quelqu'un d'autre scanne la puce, son téléphone n'ouvre que le PREMIER élément. " +
+                    "Les autres sont écrits dessus mais il faut une appli de lecture (comme Crewfit NFC) pour les voir. " +
+                    "Pour donner tous tes liens à tes abonnés en un tap, une page de liens unique reste mieux, dis-le-moi.",
+                12f, Color.parseColor("#D97706")
+            ), 8
+        )
+        multiSizeLabel = text("", 12f, C.MUTED)
+        form.add(multiSizeLabel!!, 8)
+
+        draftRecords.forEachIndexed { idx, rec ->
+            val row = vbox()
+            row.background = rounded(C.CARD2, 12)
+            val p = dp(12)
+            row.setPadding(p, p, p, p)
+
+            val chips = hbox()
+            chips.add(chip("Lien", rec.isLink) {
+                draftRecords[idx] = rec.copy(isLink = true); showTab(1)
+            }, 0, 1f)
+            chips.add(chip("Texte", !rec.isLink) {
+                draftRecords[idx] = rec.copy(isLink = false); showTab(1)
+            }, 4, 1f)
+            chips.add(chip("Enlever", false) {
+                draftRecords.removeAt(idx); showTab(1)
+            }, 4, 1f)
+            row.add(chips)
+
+            val hint = if (rec.isLink) "Adresse (ex. instagram.com/…)" else "Ton texte"
+            val type = if (rec.isLink)
+                InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            else InputType.TYPE_CLASS_TEXT
+            val et = input(hint, rec.value, type)
+            et.addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(s: Editable?) {
+                    if (idx < draftRecords.size) draftRecords[idx].value = s?.toString() ?: ""
+                    updateMultiSize()
+                }
+            })
+            row.add(et, 10)
+            form.add(row, 10)
+        }
+
+        val add = hbox()
+        add.add(button("+ Ajouter un lien", false) {
+            draftRecords.add(MultiRecord(true)); showTab(1)
+        }, 0, 1f)
+        add.add(button("+ Ajouter un texte", false) {
+            draftRecords.add(MultiRecord(false)); showTab(1)
+        }, 8, 1f)
+        form.add(add, 10)
+        updateMultiSize()
+    }
+
+    /** Construit le message NDEF multi, ou null si aucun enregistrement rempli. */
+    private fun buildMultiMessage(): NdefMessage? {
+        val recs = draftRecords.mapNotNull { r ->
+            val v = r.value.trim()
+            if (v.isEmpty()) return@mapNotNull null
+            if (r.isLink) {
+                val u = if (v.contains("://")) v else "https://$v"
+                NdefRecord.createUri(u)
+            } else {
+                NdefRecord.createTextRecord("fr", v)
+            }
+        }
+        if (recs.isEmpty()) return null
+        return NdefMessage(recs.toTypedArray())
+    }
+
+    private fun multiSummary(): String =
+        draftRecords.filter { it.value.isNotBlank() }.joinToString(" + ") {
+            (if (it.isLink) "🔗 " else "📝 ") + it.value.trim().take(25)
+        }
+
+    private fun updateMultiSize() {
+        val msg = buildMultiMessage()
+        val n = msg?.byteArrayLength ?: 0
+        val (fits, color) = when {
+            n == 0 -> "" to C.MUTED
+            n <= 130 -> "tient sur une NTAG213" to C.MUTED
+            n <= 490 -> "trop gros pour une NTAG213, prends une NTAG215" to Color.parseColor("#D97706")
+            n <= 910 -> "prends une NTAG216" to Color.parseColor("#D97706")
+            else -> "beaucoup trop gros, raccourcis tes textes" to C.DANGER
+        }
+        multiSizeLabel?.text = if (n == 0) "" else "$n octets · $fits"
+        multiSizeLabel?.setTextColor(color)
+    }
+
     private fun pickAppForAction(idx: Int) {
         val apps = launchableApps()
         val labels = apps.map { it.second }.toTypedArray()
@@ -645,6 +750,14 @@ class MainActivity : Activity(), NfcAdapter.ReaderCallback {
                 }
                 val rec = NdefRecord.createMime(ActionsCodec.MIME, ActionsCodec.encode(draftActions))
                 Triple(NdefMessage(rec), ActionsCodec.summary(draftActions), "Écriture automatisation")
+            }
+            MULTI_INDEX -> {
+                val msg = buildMultiMessage()
+                if (msg == null) {
+                    toast("Ajoute au moins un lien ou un texte, et remplis-le.")
+                    return null
+                }
+                Triple(msg, multiSummary(), "Écriture multi")
             }
             else -> Triple(
                 NdefMessage(NdefRecord(NdefRecord.TNF_EMPTY, null, null, null)),
